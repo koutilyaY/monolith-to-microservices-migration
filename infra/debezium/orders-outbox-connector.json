@@ -1,0 +1,36 @@
+{
+  "name": "orders-outbox-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "tasks.max": "1",
+
+    "database.hostname": "postgres-monolith",
+    "database.port": "5432",
+    "database.user": "commerce",
+    "database.password": "commerce",
+    "database.dbname": "commerce",
+    "topic.prefix": "monolith",
+
+    "plugin.name": "pgoutput",
+    "slot.name": "orders_outbox_slot",
+    "publication.autocreate.mode": "filtered",
+
+    "table.include.list": "public.orders_outbox",
+    "tombstones.on.delete": "false",
+    "heartbeat.interval.ms": "10000",
+
+    "_comment_router": "Debezium Outbox Event Router: unwraps the payload column and routes by aggregatetype. We pin the destination to a single stable topic 'orders.events' that orders-service consumes.",
+    "transforms": "outbox",
+    "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+    "transforms.outbox.table.field.event.id": "id",
+    "transforms.outbox.table.field.event.key": "aggregateid",
+    "transforms.outbox.table.field.event.type": "type",
+    "transforms.outbox.table.field.event.payload": "payload",
+    "transforms.outbox.route.by.field": "aggregatetype",
+    "transforms.outbox.route.topic.replacement": "orders.events",
+
+    "_comment_serdes": "Emit the payload as raw JSON string so the consumer can deserialize it directly to OrderEvent.",
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "value.converter": "org.apache.kafka.connect.storage.StringConverter"
+  }
+}

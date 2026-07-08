@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.2.5</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.koutilya.migration</groupId>
+    <artifactId>monolith-to-microservices-migration</artifactId>
+    <version>1.0.0</version>
+    <packaging>pom</packaging>
+    <name>Zero-Downtime Monolith to Microservices Migration (Strangler-Fig)</name>
+    <description>Worked, runnable demonstration of extracting a bounded context out of a live monolith with no downtime.</description>
+
+    <modules>
+        <module>legacy-monolith</module>
+        <module>orders-service</module>
+        <module>strangler-gateway</module>
+    </modules>
+
+    <properties>
+        <java.version>17</java.version>
+        <maven.compiler.release>17</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <spring-cloud.version>2023.0.1</spring-cloud.version>
+        <spring-cloud-contract.version>4.1.2</spring-cloud-contract.version>
+        <testcontainers.version>1.19.7</testcontainers.version>
+        <!--
+            Override the Byte Buddy version managed by spring-boot-starter-parent. Mockito
+            (@MockBean / @WebMvcTest) instruments classes through Byte Buddy, and older versions
+            reject newer class-file majors. 1.17.8 recognizes recent JDKs so the default `mvn test`
+            is green on Java 17 through Java 26. The spring-boot parent uses this single property for
+            both byte-buddy and byte-buddy-agent.
+        -->
+        <byte-buddy.version>1.17.8</byte-buddy.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers-bom</artifactId>
+                <version>${testcontainers.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.springframework.cloud</groupId>
+                    <artifactId>spring-cloud-contract-maven-plugin</artifactId>
+                    <version>${spring-cloud-contract.version}</version>
+                </plugin>
+                <!--
+                    Inherited by every module. The experimental flag lets Byte Buddy tolerate
+                    class-file versions newer than it officially knows about (e.g. Java 26 = major
+                    70), so Mockito-based tests run on bleeding-edge JDKs. Child modules add their
+                    own <excludes> (for *IT.java) which merge with this managed config.
+                -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <configuration>
+                        <argLine>-Dnet.bytebuddy.experimental=true</argLine>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+
+    <profiles>
+        <!--
+            Integration tests (Testcontainers: real Postgres/Kafka/Debezium) live behind this profile.
+            The DEFAULT build (mvn test) runs unit + contract tests only, with NO Docker and NO network to infra.
+        -->
+        <profile>
+            <id>it</id>
+            <properties>
+                <skipITs>false</skipITs>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-failsafe-plugin</artifactId>
+                        <configuration>
+                            <includes>
+                                <include>**/*IT.java</include>
+                            </includes>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <goals>
+                                    <goal>integration-test</goal>
+                                    <goal>verify</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+
+</project>

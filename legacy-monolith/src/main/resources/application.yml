@@ -1,0 +1,30 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: legacy-monolith
+  datasource:
+    url: ${MONOLITH_DB_URL:jdbc:postgresql://localhost:5432/commerce}
+    username: ${MONOLITH_DB_USER:commerce}
+    password: ${MONOLITH_DB_PASSWORD:commerce}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      # Demo convenience only. A real brownfield monolith owns its schema via versioned
+      # migrations (Flyway/Liquibase); ddl-auto=validate would be used in production.
+      ddl-auto: update
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+    open-in-view: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always

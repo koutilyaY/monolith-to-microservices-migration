@@ -1,0 +1,125 @@
+# Full stack for the strangler-fig migration demo. INFRA ONLY: the default Maven build does not
+# use any of this. Bring it up to run the end-to-end system and the k6 load test.
+#
+#   1. From the repo root:  mvn -DskipTests package
+#   2. From infra/:         docker compose up --build
+#   3. Register Debezium:   curl -s -X POST -H "Content-Type: application/json" \
+#                             --data @debezium/orders-outbox-connector.json \
+#                             http://localhost:8083/connectors
+#
+# Ports: gateway 8080, monolith 8081, orders-service 8082, kafka 9092, connect 8083.
+name: strangler-migration
+
+services:
+  postgres-monolith:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: commerce
+      POSTGRES_USER: commerce
+      POSTGRES_PASSWORD: commerce
+    # wal_level=logical is REQUIRED for Debezium logical decoding (CDC).
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_wal_senders=10", "-c", "max_replication_slots=10"]
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U commerce -d commerce"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  postgres-orders:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: orders
+      POSTGRES_USER: orders
+      POSTGRES_PASSWORD: orders
+    ports: ["5433:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orders -d orders"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    # Single-node KRaft (no ZooKeeper).
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29093"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:29093,INTERNAL://0.0.0.0:29092"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://localhost:9092,INTERNAL://kafka:29092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    ports: ["9092:9092"]
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  connect:
+    image: quay.io/debezium/connect:2.6
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres-monolith:
+        condition: service_healthy
+    environment:
+      BOOTSTRAP_SERVERS: "kafka:29092"
+      GROUP_ID: "debezium-connect"
+      CONFIG_STORAGE_TOPIC: "connect_configs"
+      OFFSET_STORAGE_TOPIC: "connect_offsets"
+      STATUS_STORAGE_TOPIC: "connect_statuses"
+      KEY_CONVERTER: "org.apache.kafka.connect.storage.StringConverter"
+      VALUE_CONVERTER: "org.apache.kafka.connect.storage.StringConverter"
+    ports: ["8083:8083"]
+
+  monolith:
+    build:
+      context: ..
+      dockerfile: legacy-monolith/Dockerfile
+    depends_on:
+      postgres-monolith:
+        condition: service_healthy
+    environment:
+      MONOLITH_DB_URL: "jdbc:postgresql://postgres-monolith:5432/commerce"
+      MONOLITH_DB_USER: commerce
+      MONOLITH_DB_PASSWORD: commerce
+    ports: ["8081:8081"]
+
+  orders-service:
+    build:
+      context: ..
+      dockerfile: orders-service/Dockerfile
+    depends_on:
+      postgres-orders:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      ORDERS_DB_URL: "jdbc:postgresql://postgres-orders:5432/orders"
+      ORDERS_DB_USER: orders
+      ORDERS_DB_PASSWORD: orders
+      KAFKA_BOOTSTRAP: "kafka:29092"
+      DUAL_WRITE_ENABLED: "true"
+      MONOLITH_BASE_URL: "http://monolith:8081"
+    ports: ["8082:8082"]
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: strangler-gateway/Dockerfile
+    depends_on:
+      - monolith
+      - orders-service
+    environment:
+      MONOLITH_URI: "http://monolith:8081"
+      ORDERS_SERVICE_URI: "http://orders-service:8082"
+      CANARY_INITIAL_WEIGHT: "0"
+    ports: ["8080:8080"]

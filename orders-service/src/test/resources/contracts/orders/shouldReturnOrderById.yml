@@ -1,0 +1,25 @@
+description: |
+  Represents a successful lookup of an order by id. The response is the canonical Orders contract
+  the monolith originally served; the extracted service must reproduce it exactly.
+name: shouldReturnOrderById
+request:
+  method: GET
+  url: /api/orders/11111111-1111-1111-1111-111111111111
+response:
+  status: 200
+  headers:
+    Content-Type: application/json
+  body:
+    id: "11111111-1111-1111-1111-111111111111"
+    customerId: 42
+    status: "PLACED"
+    totalAmount: 199.99
+    version: 1
+  matchers:
+    body:
+      - path: $.id
+        type: by_regex
+        value: "[0-9a-fA-F-]{36}"
+      - path: $.status
+        type: by_regex
+        value: "PLACED|PAID|SHIPPED|CANCELLED"
