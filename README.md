@@ -293,69 +293,6 @@ no restart. `SloWatcher` does this automatically when the new service's error ra
 the SLO over an interval.
 </details>
 
-## Design FAQ
-
-<details>
-<summary><b>One write succeeds and the other fails — what happens?</b></summary>
-
-We never do two writes in one distributed transaction. The authoritative side commits first; the
-second write is best-effort *after commit* and idempotent by version on the receiving side. If it
-fails, the authoritative side is still correct, the customer request still succeeds, and reconciliation
-(plus natural CDC replay) closes the gap. Worst case is bounded staleness on the non-authoritative
-side, never lost or corrupted data.
-</details>
-
-<details>
-<summary><b>Kafka is at-least-once — how is this correct without exactly-once?</b></summary>
-
-We don't need exactly-once *delivery*; we need exactly-once *effect*. The `aggregateVersion` guard
-makes application idempotent and order-insensitive: duplicates and stale/out-of-order messages are
-no-ops, only strictly-newer versions mutate state. Debezium also preserves per-key order (keyed by
-`aggregateid`), so within one order events arrive in order anyway; the guard covers redelivery and
-cross-partition edge cases.
-</details>
-
-<details>
-<summary><b>Won't backfilling historical rows clobber live updates?</b></summary>
-
-No. The backfill re-emits events through the *same* outbox/CDC path, and the consumer upserts by
-`(orderId, version)`. A backfilled event carries an *old* version, so if a newer live update has
-already been applied, the backfill is a no-op. Backfill and live traffic can run concurrently and
-converge to the highest version
-([`OrdersBackfillRunner`](legacy-monolith/src/main/java/com/koutilya/monolith/backfill/OrdersBackfillRunner.java)
-/ [`backfill.sql`](infra/backfill.sql)).
-</details>
-
-<details>
-<summary><b>What exactly do the contract tests guard?</b></summary>
-
-The producer (`orders-service`) is verified against the published contract using its real controller
-and serialization, so it can't silently change the shape. The consumer (`gateway`) tests against a
-stub in that same shape. A breaking change on either side fails `mvn test` before it can reach a
-running system.
-</details>
-
-<details>
-<summary><b>What trips the auto-rollback, and why those signals?</b></summary>
-
-[`BackendMetricsFilter`](strangler-gateway/src/main/java/com/koutilya/gateway/metrics/BackendMetricsFilter.java)
-records per-backend latency + outcome into Micrometer. `SloWatcher` computes error rate and mean
-latency over the *last interval* (a delta of cumulative counters, so old data doesn't pin the
-decision) and rolls back if either breaches its threshold — but only once there are enough requests to
-be meaningful (`min-requests`). Error rate catches correctness regressions; latency catches
-capacity/perf regressions; the sample-size gate avoids flapping on noise.
-</details>
-
-<details>
-<summary><b>How do you split a shared schema without breaking joins?</b></summary>
-
-The Orders tables move to their own database; cross-context access that was a SQL join becomes an
-explicit reference by `customerId` across an API boundary. The shared UUID id space means no id
-remapping at cutover. Consistency between the split stores is maintained by CDC replication
-(monolith→service) and idempotent mirroring (service→monolith) during the dual-run, then by making
-`orders-service` the sole owner after cutover.
-</details>
-
 ## Production readiness / non-goals
 
 This is a **teaching-grade, self-contained model of the pattern**, tuned so the default build is green
